@@ -9,25 +9,12 @@ use solana_program::{
     program_error::ProgramError,
     pubkey::Pubkey,
     system_instruction,
-    program::invoke, // , invoke_signed
+    program::invoke, // invoke_signed
     // system_program,
     sysvar::{rent::Rent, Sysvar},
 };
 
-#[derive(BorshSerialize, BorshDeserialize, Debug)]
-pub struct MessageAccount {
-    pub message: String,
-}
-
-// Define instruction types
-#[derive(BorshSerialize, BorshDeserialize, Debug)]
-pub enum MessageInstruction {
-    CreateMessage { message: String },
-    ReadMessage,
-    ParseFloat { float: f64 }, 
-}
-
-// working towards this
+// Riverboat space for two competing predictions
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct DualSpace {
     pub terms: String,      // 4 + length
@@ -37,7 +24,14 @@ pub struct DualSpace {
     pub belief_b: f64,      // 8 bytes
 }
 
-impl MessageInstruction {
+// Define instruction types
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub enum SpaceInstruction {
+    CreateSpace { space: DualSpace },
+    GetSpace,
+}
+
+impl SpaceInstruction {
     pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
         // Get the instruction variant from the first byte
         let (&variant, rest) = input
@@ -49,22 +43,21 @@ impl MessageInstruction {
         // Match instruction type and parse the remaining bytes based on the variant
         match variant {
             0 => {
-                // Parse String
-                let message = String::try_from_slice(
+
+                /*
+                if let Ok(address_info) = AddressInfo::try_from_slice(instruction_data) {
+                    return instructions::create::create_address_info(program_id, accounts, address_info);
+                };
+                */
+
+                let dual_space = DualSpace::try_from_slice(
                     &rest).map_err(|_| ProgramError::InvalidInstructionData)?;
-                Ok(Self::CreateMessage { message })
+
+                Ok(Self::CreateSpace { space: dual_space })
             }
             1 => { // No additional data needed
-                Ok(Self::ReadMessage)
+                Ok(Self::GetSpace)
             }
-            2 => {
-                // Parse f64
-                let float = f64::from_le_bytes(
-                    rest.try_into()
-                        .map_err(|_| ProgramError::InvalidInstructionData)?
-                );
-                Ok(Self::ParseFloat { float })
-            } 
             _ => Err(ProgramError::InvalidInstructionData),
         }
     }
@@ -79,34 +72,26 @@ pub fn process_instruction(
 ) -> ProgramResult {
 
     // Unpack instruction data
-    let instruction = MessageInstruction::unpack(instruction_data)?;
+    let instruction = SpaceInstruction::unpack(instruction_data)?;
 
     match instruction {
-        MessageInstruction::CreateMessage { message } => {
-            create_message(program_id, accounts, message)
+        SpaceInstruction::CreateSpace { space } => {
+            create_space(program_id, accounts, space)
         }
-        MessageInstruction::ReadMessage => {
-            read_message(program_id, accounts)
-        }
-        MessageInstruction::ParseFloat { float } => {
-            parse_float(float)
+        SpaceInstruction::GetSpace => {
+            get_space(program_id, accounts)
         }
     }
 }
 
-fn parse_float(float: f64) -> ProgramResult {
-    msg!("We got that mfin float: {:?}", float);
-    Ok(())
-}
-
-fn create_message(
+fn create_space(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    message: String,
+    space: DualSpace,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     
-    let message_account = next_account_info(accounts_iter)?;
+    let space_account = next_account_info(accounts_iter)?;
     let user = next_account_info(accounts_iter)?;
     let system_program = next_account_info(accounts_iter)?;
 
@@ -117,48 +102,49 @@ fn create_message(
 
     // Create the message account
     let rent = Rent::get()?;
-    let space = 4 + message.len(); // Allocate fixed space for the message
-    let required_lamports = rent.minimum_balance(space);
+
+    let space_allocation = 32 + 32 + 8 + 8 + 4 + space.terms.len(); // Allocate fixed space for the message
+
+    let required_lamports = rent.minimum_balance(space_allocation);
 
     // Create account with the program as owner
     invoke(
         &system_instruction::create_account(
             user.key,
-            message_account.key,
+            space_account.key,
             required_lamports,
-            space as u64,
+            space_allocation as u64,
             program_id,
         ),
         &[
             user.clone(), 
-            message_account.clone(), 
+            space_account.clone(), 
             system_program.clone()
         ],
     )?;
 
-    // Store the message
-    let message_data = MessageAccount { message };
+    space.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
 
     // attempt
-    let mut account_data = &mut message_account.data.borrow_mut()[..];
-    message_data.serialize(&mut account_data)?;
+    //let mut account_data = &mut message_account.data.borrow_mut()[..];
+    //message_data.serialize(&mut account_data)?;
     
-    msg!("Message stored successfully!");
+    msg!("Space stored successfully!");
     Ok(())
 }
 
-fn read_message(
+fn get_space(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
 ) -> ProgramResult {
     msg!("id {:?}", program_id);
 
     let accounts_iter = &mut accounts.iter();
-    let message_account = next_account_info(accounts_iter)?;
+    let space_account = next_account_info(accounts_iter)?;
 
     // Deserialize the message
-    let data = &message_account.data.borrow_mut();
-    let message_data = MessageAccount::try_from_slice(&data);
+    let data = &space_account.data.borrow_mut();
+    let message_data = DualSpace::try_from_slice(&data);
     msg!("result {:?}", message_data);
 
     Ok(())
