@@ -2,7 +2,10 @@
 
 use borsh::to_vec;
 use crate::{process_instruction, SpaceInstruction, DualSpace};
-use solana_program::{system_program, pubkey::Pubkey};
+use solana_program::{
+    system_program, 
+    pubkey::Pubkey
+};
 use solana_program_test::*;
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
@@ -20,7 +23,7 @@ async fn test_dual_space() {
             .start()
             .await;
     
-    // create and encoded space data
+    // create and encode space data
     let dual_space = DualSpace {
         terms: "Trump switches to Regular Coke in 2025".to_string(),
         wallet_a: Pubkey::from_str_const("HWeDsoC6T9mCfaGKvoF7v6WdZyfEFhU2VaPEMzEjCq3J"), // switch to user_account
@@ -54,13 +57,13 @@ async fn test_dual_space() {
     write_transaction.sign(&[&payer, &user_account], recent_blockhash);
     banks_client.process_transaction(write_transaction).await.unwrap();
 
-    // Step 2: Test reading the message
-    /*
+    
+    // Step 2: Test reading the space
     // Create read instruction
     let read_instruction = Instruction::new_with_bytes(
         program_id,
-        &[1], // 1 = increment instruction
-        vec![AccountMeta::new(message_account.pubkey(), true)],
+        &[1], // 1 = get space instruction
+        vec![AccountMeta::new(user_account.pubkey(), true)],
     );
 
     // Create and send transaction
@@ -68,6 +71,6 @@ async fn test_dual_space() {
         &[read_instruction],
         Some(&payer.pubkey())
     );
-    read_transaction.sign(&[&payer, &message_account], recent_blockhash);
-    */
+    read_transaction.sign(&[&payer, &user_account], recent_blockhash);
+    banks_client.process_transaction(read_transaction).await.unwrap();
 }

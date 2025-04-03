@@ -43,13 +43,6 @@ impl SpaceInstruction {
         // Match instruction type and parse the remaining bytes based on the variant
         match variant {
             0 => {
-
-                /*
-                if let Ok(address_info) = AddressInfo::try_from_slice(instruction_data) {
-                    return instructions::create::create_address_info(program_id, accounts, address_info);
-                };
-                */
-
                 let dual_space = DualSpace::try_from_slice(
                     &rest).map_err(|_| ProgramError::InvalidInstructionData)?;
 
@@ -58,7 +51,9 @@ impl SpaceInstruction {
             1 => { // No additional data needed
                 Ok(Self::GetSpace)
             }
-            _ => Err(ProgramError::InvalidInstructionData),
+            _ => {
+                Err(ProgramError::InvalidInstructionData)
+            }
         }
     }
 }
@@ -73,6 +68,7 @@ pub fn process_instruction(
 
     // Unpack instruction data
     let instruction = SpaceInstruction::unpack(instruction_data)?;
+    msg!("instruct {:?}", instruction);
 
     match instruction {
         SpaceInstruction::CreateSpace { space } => {
