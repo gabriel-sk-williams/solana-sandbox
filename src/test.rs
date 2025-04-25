@@ -15,18 +15,20 @@ use solana_sdk::{
 
 #[tokio::test]
 async fn test_dual_space() {
-    // Create a new keypair for the message account
-    let user_account = Keypair::new();
+
     let program_id = Pubkey::new_unique();
     let (banks_client, payer, recent_blockhash) = 
         ProgramTest::new("solana_god", program_id, processor!(process_instruction))
             .start()
             .await;
+
+    // let seed = &[&b"gerben"[..]];
+    let (space_pda, _bump) = Pubkey::find_program_address(&[b"gerben"], &program_id);
     
     // create and encode space data
     let dual_space = DualSpace {
         terms: "Trump switches to Regular Coke in 2025".to_string(),
-        wallet_a: Pubkey::from_str_const("HWeDsoC6T9mCfaGKvoF7v6WdZyfEFhU2VaPEMzEjCq3J"), // switch to user_account
+        wallet_a: Pubkey::from_str_const("HWeDsoC6T9mCfaGKvoF7v6WdZyfEFhU2VaPEMzEjCq3J"),
         belief_a: 0.65,
         wallet_b: Pubkey::from_str_const("7V4wLNxUvejyeZ5Bmr2GpvfBL1mZxzQMhsyR7noiM3uD"),
         belief_b: 0.88,
@@ -42,7 +44,7 @@ async fn test_dual_space() {
     let write_instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(user_account.pubkey(), true),
+            AccountMeta::new(space_pda, false),
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
@@ -54,7 +56,7 @@ async fn test_dual_space() {
         &[write_instruction], 
         Some(&payer.pubkey())
     );
-    write_transaction.sign(&[&payer, &user_account], recent_blockhash);
+    write_transaction.sign(&[&payer], recent_blockhash);
     banks_client.process_transaction(write_transaction).await.unwrap();
 
     
@@ -63,7 +65,7 @@ async fn test_dual_space() {
     let read_instruction = Instruction::new_with_bytes(
         program_id,
         &[1], // 1 = get space instruction
-        vec![AccountMeta::new(user_account.pubkey(), true)],
+        vec![AccountMeta::new_readonly(space_pda, false)],
     );
 
     // Create and send transaction
@@ -71,6 +73,7 @@ async fn test_dual_space() {
         &[read_instruction],
         Some(&payer.pubkey())
     );
-    read_transaction.sign(&[&payer, &user_account], recent_blockhash);
+    read_transaction.sign(&[&payer], recent_blockhash);
     banks_client.process_transaction(read_transaction).await.unwrap();
+
 }

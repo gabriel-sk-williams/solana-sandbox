@@ -9,7 +9,8 @@ use solana_program::{
     program_error::ProgramError,
     pubkey::Pubkey,
     system_instruction,
-    program::invoke, // invoke_signed
+    // program::invoke,
+    program::invoke_signed,
     // system_program,
     sysvar::{rent::Rent, Sysvar},
 };
@@ -103,8 +104,17 @@ fn create_space(
 
     let required_lamports = rent.minimum_balance(space_allocation);
 
+    // Derive PDA
+    let space_seed = b"gerben";
+    // let (space_pda, bump) = Pubkey::find_program_address(&[space_seed, user.key.as_ref()], program_id);
+    let (space_pda, bump) = Pubkey::find_program_address(&[space_seed], program_id);
+
+    if space_pda != *space_account.key {
+        return Err(ProgramError::InvalidArgument);
+    }
+
     // Create account with the program as owner
-    invoke(
+    invoke_signed(
         &system_instruction::create_account(
             user.key,
             space_account.key,
@@ -115,15 +125,13 @@ fn create_space(
         &[
             user.clone(), 
             space_account.clone(), 
-            system_program.clone()
+            system_program.clone(),
         ],
+        &[&[b"gerben", &[bump]]],
+        // &[&[b"gerben", user.key.as_ref(), &[bump]]],
     )?;
 
     space.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
-
-    // attempt
-    //let mut account_data = &mut message_account.data.borrow_mut()[..];
-    //message_data.serialize(&mut account_data)?;
     
     msg!("Space stored successfully!");
     Ok(())
