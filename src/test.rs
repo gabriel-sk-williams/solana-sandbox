@@ -4,14 +4,16 @@ use borsh::to_vec;
 use crate::{process_instruction, SpaceInstruction, DualSpace};
 use solana_program::{
     system_program, 
-    pubkey::Pubkey
+    pubkey::Pubkey,
+    hash::hash,
 };
 use solana_program_test::*;
 use solana_sdk::{
     instruction::{AccountMeta, Instruction},
-    signature::{Keypair, Signer},
+    signature::Signer,
     transaction::Transaction,
 };
+
 
 #[tokio::test]
 async fn test_dual_space() {
@@ -21,11 +23,8 @@ async fn test_dual_space() {
         ProgramTest::new("solana_god", program_id, processor!(process_instruction))
             .start()
             .await;
-
-    // let seed = &[&b"gerben"[..]];
-    let (space_pda, _bump) = Pubkey::find_program_address(&[b"gerben"], &program_id);
     
-    // create and encode space data
+    // Create test space
     let dual_space = DualSpace {
         terms: "Trump switches to Regular Coke in 2025".to_string(),
         wallet_a: Pubkey::from_str_const("HWeDsoC6T9mCfaGKvoF7v6WdZyfEFhU2VaPEMzEjCq3J"),
@@ -33,6 +32,17 @@ async fn test_dual_space() {
         wallet_b: Pubkey::from_str_const("7V4wLNxUvejyeZ5Bmr2GpvfBL1mZxzQMhsyR7noiM3uD"),
         belief_b: 0.88,
     };
+
+    // Hash terms with both wallets
+    let terms_hash = hash(dual_space.terms.as_bytes()).to_bytes();
+    let (space_pda, _bump) = Pubkey::find_program_address(
+        &[
+            &terms_hash[..],
+            dual_space.wallet_a.as_ref(),
+            dual_space.wallet_b.as_ref(),
+        ], 
+        &program_id
+    );
 
     let instruction_data = SpaceInstruction::CreateSpace {
         space: dual_space,

@@ -13,6 +13,7 @@ use solana_program::{
     program::invoke_signed,
     // system_program,
     sysvar::{rent::Rent, Sysvar},
+    hash::hash,
 };
 
 // Riverboat space for two competing predictions
@@ -84,7 +85,7 @@ pub fn process_instruction(
 fn create_space(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    space: DualSpace,
+    dual_space: DualSpace,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
     
@@ -100,14 +101,21 @@ fn create_space(
     // Create the message account
     let rent = Rent::get()?;
 
-    let space_allocation = 32 + 32 + 8 + 8 + 4 + space.terms.len(); // Allocate fixed space for the message
+    let space_allocation = 32 + 32 + 8 + 8 + 4 + dual_space.terms.len(); // Allocate fixed space for the message
 
     let required_lamports = rent.minimum_balance(space_allocation);
 
     // Derive PDA
-    let space_seed = b"gerben";
-    // let (space_pda, bump) = Pubkey::find_program_address(&[space_seed, user.key.as_ref()], program_id);
-    let (space_pda, bump) = Pubkey::find_program_address(&[space_seed], program_id);
+    
+    let terms_hash = hash(dual_space.terms.as_bytes()).to_bytes();
+    let (space_pda, bump) = Pubkey::find_program_address(
+        &[
+            &terms_hash[..],
+            dual_space.wallet_a.as_ref(),
+            dual_space.wallet_b.as_ref(),
+        ], 
+        program_id
+    );
 
     if space_pda != *space_account.key {
         return Err(ProgramError::InvalidArgument);
@@ -127,11 +135,15 @@ fn create_space(
             space_account.clone(), 
             system_program.clone(),
         ],
-        &[&[b"gerben", &[bump]]],
-        // &[&[b"gerben", user.key.as_ref(), &[bump]]],
+        &[&[
+            &terms_hash[..],
+            dual_space.wallet_a.as_ref(),
+            dual_space.wallet_b.as_ref(),
+            &[bump]
+        ]],
     )?;
 
-    space.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
+    dual_space.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
     
     msg!("Space stored successfully!");
     Ok(())
