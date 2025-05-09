@@ -16,14 +16,15 @@ use solana_program::{
     hash::hash,
 };
 
-// Riverboat space for two competing predictions
+// Riverboat parlor for two competing predictions
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct DualSpace {
     pub terms: String,      // 4 + length
     pub wallet_a: Pubkey,   // 32 bytes
-    pub belief_a: f64,      // 8 bytes
     pub wallet_b: Pubkey,   // 32 bytes
+    pub belief_a: f64,      // 8 bytes
     pub belief_b: f64,      // 8 bytes
+    // pub stake: f64,         // 8 bytes
 }
 
 // Define instruction types
@@ -31,6 +32,22 @@ pub struct DualSpace {
 pub enum SpaceInstruction {
     CreateSpace { space: DualSpace },
     GetSpace,
+    SetApproval { decision: ApprovalState },
+}
+
+#[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
+pub enum ApprovalState {
+    Pending,
+    Landed,
+    Missed,
+    Push
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct Wager {
+    pub parlor: DualSpace,
+    pub wallet_a_decision: ApprovalState, // 1 byte
+    pub wallet_b_decision:  ApprovalState, // 1 byte
 }
 
 impl SpaceInstruction {
@@ -52,6 +69,19 @@ impl SpaceInstruction {
             }
             1 => { // No additional data needed
                 Ok(Self::GetSpace)
+            }
+            2 => {
+                let decision_byte: u8 = 1;
+
+                let decision = match decision_byte {
+                    0 => ApprovalState::Pending,
+                    1 => ApprovalState::Landed,
+                    2 => ApprovalState::Missed,
+                    3 => ApprovalState::Push,
+                    _ => return Err(ProgramError::InvalidInstructionData),
+                };
+
+                Ok(Self::SetApproval { decision })
             }
             _ => {
                 Err(ProgramError::InvalidInstructionData)
@@ -79,6 +109,9 @@ pub fn process_instruction(
         SpaceInstruction::GetSpace => {
             get_space(program_id, accounts)
         }
+        SpaceInstruction::SetApproval { decision } => {
+            set_approval(program_id, accounts, decision)
+        }
     }
 }
 
@@ -100,13 +133,10 @@ fn create_space(
 
     // Create the message account
     let rent = Rent::get()?;
-
-    let space_allocation = 32 + 32 + 8 + 8 + 4 + dual_space.terms.len(); // Allocate fixed space for the message
-
+    let space_allocation = 32 + 32 + 8 + 8 + 4 + 1 + 1 + dual_space.terms.len(); // Allocate fixed space for the message
     let required_lamports = rent.minimum_balance(space_allocation);
 
     // Derive PDA
-    
     let terms_hash = hash(dual_space.terms.as_bytes()).to_bytes();
     let (space_pda, bump) = Pubkey::find_program_address(
         &[
@@ -143,7 +173,13 @@ fn create_space(
         ]],
     )?;
 
-    dual_space.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
+    let wager = Wager {
+        parlor: dual_space,
+        wallet_a_decision: ApprovalState::Pending,
+        wallet_b_decision:  ApprovalState::Pending,
+    };
+
+    wager.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
     
     msg!("Space stored successfully!");
     Ok(())
@@ -160,8 +196,54 @@ fn get_space(
 
     // Deserialize the message
     let data = &space_account.data.borrow_mut();
-    let message_data = DualSpace::try_from_slice(&data);
+    let message_data = Wager::try_from_slice(&data);
     msg!("result {:?}", message_data);
+
+    Ok(())
+}
+
+fn set_approval(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    decision: ApprovalState,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let space_account = next_account_info(accounts_iter)?;
+    let signer = next_account_info(accounts_iter)?;
+
+    // Verify account ownership
+    if space_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    
+    // Verify signer
+    if !signer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    
+    // Deserialize the account data
+    let mut wager = Wager::try_from_slice(&space_account.data.borrow())?;
+    
+    
+    // Verify signer is an authorized wallet and update the appropriate approval
+    if signer.key == &wager.parlor.wallet_a {
+        wager.wallet_a_decision = decision;
+    } else if signer.key == &wager.parlor.wallet_b {
+        wager.wallet_b_decision = decision;
+    } else {
+        return Err(ProgramError::InvalidArgument);
+    }
+    
+    // Serialize the updated data back to the account
+    wager.serialize(&mut &mut space_account.data.borrow_mut()[..])?;
+
+    
+    // Check if we need to execute payout logic
+    if wager.wallet_a_decision == ApprovalState::Landed && 
+       wager.wallet_b_decision == ApprovalState::Landed {
+        // Execute payout logic
+        msg!("Landed")
+    }
 
     Ok(())
 }

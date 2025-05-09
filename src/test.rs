@@ -12,6 +12,7 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     signature::Signer,
     transaction::Transaction,
+    signer::keypair::Keypair,
 };
 
 
@@ -23,13 +24,29 @@ async fn test_dual_space() {
         ProgramTest::new("solana_god", program_id, processor!(process_instruction))
             .start()
             .await;
-    
-    // Create test space
+
+    let wallet_a = Keypair::new();
+    let wallet_b = Keypair::new();
+
+    /*
+    // Fund wallets so they can sign transactions
+    banks_client.process_transaction(Transaction::new_with_payer(
+        &[
+            system_instruction::transfer(&payer.pubkey(), &wallet_a.pubkey(), 1_000_000_000),
+            system_instruction::transfer(&payer.pubkey(), &wallet_b.pubkey(), 1_000_000_000),
+        ],
+        Some(&payer.pubkey()),
+    ).sign(&[&payer], recent_blockhash)).await.unwrap();
+    */
+
+    //
+    // Step 1: Create test space
+    //
     let dual_space = DualSpace {
         terms: "Trump switches to Regular Coke in 2025".to_string(),
-        wallet_a: Pubkey::from_str_const("HWeDsoC6T9mCfaGKvoF7v6WdZyfEFhU2VaPEMzEjCq3J"),
+        wallet_a: wallet_a.pubkey(),
         belief_a: 0.65,
-        wallet_b: Pubkey::from_str_const("7V4wLNxUvejyeZ5Bmr2GpvfBL1mZxzQMhsyR7noiM3uD"),
+        wallet_b: wallet_b.pubkey(),
         belief_b: 0.88,
     };
 
@@ -70,8 +87,9 @@ async fn test_dual_space() {
     banks_client.process_transaction(write_transaction).await.unwrap();
 
     
+    //
     // Step 2: Test reading the space
-    // Create read instruction
+    //
     let read_instruction = Instruction::new_with_bytes(
         program_id,
         &[1], // 1 = get space instruction
@@ -85,5 +103,27 @@ async fn test_dual_space() {
     );
     read_transaction.sign(&[&payer], recent_blockhash);
     banks_client.process_transaction(read_transaction).await.unwrap();
+    
 
-}
+    
+    //
+    // Step 3: Update status
+    //
+    let update_instruction = Instruction::new_with_bytes(
+        program_id,
+        &[2], // 1 = update instruction
+        vec![
+            AccountMeta::new(space_pda, false), // space account (writable)
+            AccountMeta::new_readonly(wallet_a.pubkey(), true),
+        ],
+    );
+
+    // Create and send transaction
+    let mut update_transaction = Transaction::new_with_payer(
+        &[update_instruction],
+        Some(&payer.pubkey())
+    );
+    update_transaction.sign(&[&payer, &wallet_a], recent_blockhash);
+    banks_client.process_transaction(update_transaction).await.unwrap();
+    
+}   
