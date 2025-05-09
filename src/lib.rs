@@ -71,7 +71,9 @@ impl SpaceInstruction {
                 Ok(Self::GetSpace)
             }
             2 => {
-                let decision_byte: u8 = 1;
+                let (&decision_byte, _) = rest
+                    .split_first()
+                    .ok_or(ProgramError::InvalidInstructionData)?;
 
                 let decision = match decision_byte {
                     0 => ApprovalState::Pending,
@@ -224,7 +226,6 @@ fn set_approval(
     // Deserialize the account data
     let mut wager = Wager::try_from_slice(&space_account.data.borrow())?;
     
-    
     // Verify signer is an authorized wallet and update the appropriate approval
     if signer.key == &wager.parlor.wallet_a {
         wager.wallet_a_decision = decision;
@@ -242,7 +243,7 @@ fn set_approval(
     if wager.wallet_a_decision == ApprovalState::Landed && 
        wager.wallet_b_decision == ApprovalState::Landed {
         // Execute payout logic
-        msg!("Landed")
+        msg!("Double Landed!")
     }
 
     Ok(())

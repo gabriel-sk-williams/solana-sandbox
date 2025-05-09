@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use borsh::to_vec;
-use crate::{process_instruction, SpaceInstruction, DualSpace};
+use crate::{process_instruction, ApprovalState, DualSpace, SpaceInstruction};
 use solana_program::{
     system_program, 
     pubkey::Pubkey,
@@ -109,9 +109,13 @@ async fn test_dual_space() {
     //
     // Step 3: Update status
     //
+
+    // wallet_a
+    let decision_a = ApprovalState::Landed as u8;
+
     let update_instruction = Instruction::new_with_bytes(
         program_id,
-        &[2], // 1 = update instruction
+        &[2, decision_a],
         vec![
             AccountMeta::new(space_pda, false), // space account (writable)
             AccountMeta::new_readonly(wallet_a.pubkey(), true),
@@ -124,6 +128,27 @@ async fn test_dual_space() {
         Some(&payer.pubkey())
     );
     update_transaction.sign(&[&payer, &wallet_a], recent_blockhash);
+    banks_client.process_transaction(update_transaction).await.unwrap();
+
+
+    // wallet_b
+    let decision_b = ApprovalState::Landed as u8;
+
+    let update_instruction = Instruction::new_with_bytes(
+        program_id,
+        &[2, decision_b],
+        vec![
+            AccountMeta::new(space_pda, false), // space account (writable)
+            AccountMeta::new_readonly(wallet_b.pubkey(), true),
+        ],
+    );
+
+    // Create and send transaction
+    let mut update_transaction = Transaction::new_with_payer(
+        &[update_instruction],
+        Some(&payer.pubkey())
+    );
+    update_transaction.sign(&[&payer, &wallet_b], recent_blockhash);
     banks_client.process_transaction(update_transaction).await.unwrap();
     
 }   
