@@ -45,8 +45,8 @@ async fn test_dual_space() {
     let dual_space = DualSpace {
         terms: "Trump switches to Regular Coke in 2025".to_string(),
         wallet_a: wallet_a.pubkey(),
-        belief_a: 0.65,
         wallet_b: wallet_b.pubkey(),
+        belief_a: 0.65,
         belief_b: 0.88,
     };
 

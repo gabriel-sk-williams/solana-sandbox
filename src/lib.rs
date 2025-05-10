@@ -24,8 +24,8 @@ pub struct DualSpace {
     pub wallet_b: Pubkey,   // 32 bytes
     pub belief_a: f64,      // 8 bytes
     pub belief_b: f64,      // 8 bytes
-    // pub stake: f64,         // 8 bytes
 }
+    // pub stake: f64,         // 8 bytes
 
 // Define instruction types
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
@@ -47,7 +47,7 @@ pub enum ApprovalState {
 pub struct Wager {
     pub parlor: DualSpace,
     pub wallet_a_decision: ApprovalState, // 1 byte
-    pub wallet_b_decision:  ApprovalState, // 1 byte
+    pub wallet_b_decision: ApprovalState, // 1 byte
 }
 
 impl SpaceInstruction {
@@ -243,7 +243,7 @@ fn set_approval(
     if wager.wallet_a_decision == ApprovalState::Landed && 
        wager.wallet_b_decision == ApprovalState::Landed {
         // Execute payout logic
-        msg!("Double Landed!")
+        msg!("Wager Landed!")
     }
 
     Ok(())
