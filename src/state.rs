@@ -18,7 +18,7 @@ pub struct Wager {
     pub paid_b: bool,                       // 1 byte
 }
 
-// Riverboat parlor for two competing predictions
+// Contract for two competing predictions
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct VersusContract {
     pub terms: String,      // 4 + length
@@ -27,6 +27,7 @@ pub struct VersusContract {
     pub stake: u64,         // 8 bytes
 }
 
+// Possible Wager states for each participant
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
 pub enum ApprovalState {
     Pending,

@@ -1,7 +1,8 @@
 #![cfg(test)]
 
 use borsh::to_vec;
-use crate::{process_instruction, ApprovalState, VersusContract, WagerInstruction};
+use crate::{process_instruction, WagerInstruction};
+use crate::state::{ApprovalState, VersusContract};
 use solana_program::{
     system_program, 
     pubkey::Pubkey,
@@ -96,7 +97,7 @@ async fn test_versus_contract() {
     //
     // Step 3: Update status
     //
-    
+
     // wallet_a
     let decision_a = ApprovalState::Landed as u8;
 
