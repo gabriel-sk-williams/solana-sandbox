@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use borsh::to_vec;
-use crate::{process_instruction, ApprovalState, DualSpace, SpaceInstruction};
+use crate::{process_instruction, ApprovalState, VersusContract, WagerInstruction};
 use solana_program::{
     system_program, 
     pubkey::Pubkey,
@@ -17,7 +17,7 @@ use solana_sdk::{
 
 
 #[tokio::test]
-async fn test_dual_space() {
+async fn test_versus_contract() {
 
     let program_id = Pubkey::new_unique();
     let (banks_client, payer, recent_blockhash) = 
@@ -28,41 +28,29 @@ async fn test_dual_space() {
     let wallet_a = Keypair::new();
     let wallet_b = Keypair::new();
 
-    /*
-    // Fund wallets so they can sign transactions
-    banks_client.process_transaction(Transaction::new_with_payer(
-        &[
-            system_instruction::transfer(&payer.pubkey(), &wallet_a.pubkey(), 1_000_000_000),
-            system_instruction::transfer(&payer.pubkey(), &wallet_b.pubkey(), 1_000_000_000),
-        ],
-        Some(&payer.pubkey()),
-    ).sign(&[&payer], recent_blockhash)).await.unwrap();
-    */
-
     //
-    // Step 1: Create test space
+    // Step 1: Create test wager
     //
-    let dual_space = DualSpace {
+    let versus_contract = VersusContract {
         terms: "Trump switches to Regular Coke in 2025".to_string(),
         wallet_a: wallet_a.pubkey(),
         wallet_b: wallet_b.pubkey(),
-        belief_a: 0.65,
-        belief_b: 0.88,
+        stake: 100000000, // 0.1 SOL 100_000_000
     };
 
     // Hash terms with both wallets
-    let terms_hash = hash(dual_space.terms.as_bytes()).to_bytes();
-    let (space_pda, _bump) = Pubkey::find_program_address(
+    let terms_hash = hash(versus_contract.terms.as_bytes()).to_bytes();
+    let (wager_pda, _bump) = Pubkey::find_program_address(
         &[
             &terms_hash[..],
-            dual_space.wallet_a.as_ref(),
-            dual_space.wallet_b.as_ref(),
+            versus_contract.wallet_a.as_ref(),
+            versus_contract.wallet_b.as_ref(),
         ], 
         &program_id
     );
 
-    let instruction_data = SpaceInstruction::CreateSpace {
-        space: dual_space,
+    let instruction_data = WagerInstruction::CreateWager {
+        contract: versus_contract,
     };
 
     let encoded_data = to_vec(&instruction_data).unwrap();
@@ -71,7 +59,7 @@ async fn test_dual_space() {
     let write_instruction = Instruction {
         program_id,
         accounts: vec![
-            AccountMeta::new(space_pda, false),
+            AccountMeta::new(wager_pda, false),
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
@@ -88,12 +76,12 @@ async fn test_dual_space() {
 
     
     //
-    // Step 2: Test reading the space
+    // Step 2: Test reading the wager
     //
     let read_instruction = Instruction::new_with_bytes(
         program_id,
-        &[1], // 1 = get space instruction
-        vec![AccountMeta::new_readonly(space_pda, false)],
+        &[0], // get wager
+        vec![AccountMeta::new_readonly(wager_pda, false)],
     );
 
     // Create and send transaction
@@ -104,12 +92,11 @@ async fn test_dual_space() {
     read_transaction.sign(&[&payer], recent_blockhash);
     banks_client.process_transaction(read_transaction).await.unwrap();
     
-
     
     //
     // Step 3: Update status
     //
-
+    
     // wallet_a
     let decision_a = ApprovalState::Landed as u8;
 
@@ -117,7 +104,7 @@ async fn test_dual_space() {
         program_id,
         &[2, decision_a],
         vec![
-            AccountMeta::new(space_pda, false), // space account (writable)
+            AccountMeta::new(wager_pda, false),
             AccountMeta::new_readonly(wallet_a.pubkey(), true),
         ],
     );
@@ -130,7 +117,6 @@ async fn test_dual_space() {
     update_transaction.sign(&[&payer, &wallet_a], recent_blockhash);
     banks_client.process_transaction(update_transaction).await.unwrap();
 
-
     // wallet_b
     let decision_b = ApprovalState::Landed as u8;
 
@@ -138,7 +124,7 @@ async fn test_dual_space() {
         program_id,
         &[2, decision_b],
         vec![
-            AccountMeta::new(space_pda, false), // space account (writable)
+            AccountMeta::new(wager_pda, false),
             AccountMeta::new_readonly(wallet_b.pubkey(), true),
         ],
     );
@@ -150,5 +136,5 @@ async fn test_dual_space() {
     );
     update_transaction.sign(&[&payer, &wallet_b], recent_blockhash);
     banks_client.process_transaction(update_transaction).await.unwrap();
-    
+
 }   
