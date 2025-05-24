@@ -2,16 +2,18 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::state::{Wager, VersusContract, ApprovalState};
+use crate::state::{ApprovalState, VersusContract, Wager};
 
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
     entrypoint::ProgramResult,
     program_error::ProgramError,
     pubkey::Pubkey,
+    program::invoke,
     program::invoke_signed,
     sysvar::{rent::Rent, Sysvar},
     hash::hash,
+    system_program,
     system_instruction,
     msg,
 };
@@ -24,6 +26,9 @@ pub fn get_wager(
 
     let accounts_iter = &mut accounts.iter();
     let wager_account = next_account_info(accounts_iter)?;
+
+    // Print the SOL balance (in lamports)
+    msg!("wager_account lamports: {}", wager_account.lamports());
 
     // Deserialize the message
     let data = &wager_account.data.borrow_mut();
@@ -95,10 +100,10 @@ pub fn create_wager(
 
     let wager = Wager {
         contract: contract,
-        wallet_a_decision: ApprovalState::Pending,
-        wallet_b_decision: ApprovalState::Pending,
-        belief_a: 0,
-        belief_b: 0,
+        decision_a: ApprovalState::Pending,
+        decision_b: ApprovalState::Pending,
+        belief_a: 255,
+        belief_b: 255,
         paid_a: false,
         paid_b: false,
     };
@@ -106,6 +111,125 @@ pub fn create_wager(
     wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
     
     msg!("Wager stored successfully!");
+    Ok(())
+}
+
+pub fn process_deposit(
+    _program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: u64,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+
+    msg!("Processing Deposit...");
+    
+    // Get accounts
+    let wager_account = next_account_info(accounts_iter)?;
+    let user_account = next_account_info(accounts_iter)?;
+    let system_program = next_account_info(accounts_iter)?;
+    
+    // Verify accounts
+    if !user_account.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    
+    /*
+    if user_account.key != &user {
+        return Err(ProgramError::InvalidArgument);
+    }
+    */
+    
+    if *system_program.key != system_program::ID {
+        return Err(ProgramError::InvalidArgument);
+    }
+    
+    // Get dual space data
+    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
+    
+    // Verify stake amount
+    if amount < wager.contract.stake {
+        return Err(ProgramError::InsufficientFunds);
+    }
+    
+    // Transfer funds from user to the program account
+    invoke(
+        &system_instruction::transfer(
+            user_account.key,
+            wager_account.key,
+            amount,
+        ),
+        &[
+            user_account.clone(),
+            wager_account.clone(),
+            system_program.clone(),
+        ],
+    )?;
+    
+    // Update payment status
+    if user_account.key == &wager.contract.wallet_a {
+        wager.paid_a = true;
+    } else if user_account.key == &wager.contract.wallet_b {
+        wager.paid_b = true;
+    } else {
+        return Err(ProgramError::InvalidArgument);
+    }
+    
+    // Serialize and save the updated state
+    wager.serialize(&mut *wager_account.data.borrow_mut())?;
+    
+    Ok(())
+}
+
+pub fn update_belief(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    belief: u8,
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let wager_account = next_account_info(accounts_iter)?;
+    let signer = next_account_info(accounts_iter)?;
+
+    // Verify account ownership
+    if wager_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+    
+    // Verify signer
+    if !signer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+    
+    // Deserialize the account data
+    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
+    
+    // Verify signer is an authorized wallet
+    if signer.key == &wager.contract.wallet_a {
+
+        // Verify wallet has paid stake
+        if !wager.paid_a {
+            return Err(ProgramError::Immutable);
+        } else {
+            wager.belief_a = belief;
+        }
+
+    } else if signer.key == &wager.contract.wallet_b {
+
+        // Verify wallet has paid stake
+        if !wager.paid_b {
+            return Err(ProgramError::Immutable);
+        } else {
+            wager.belief_b = belief;
+        }
+
+    } else {
+        return Err(ProgramError::InvalidArgument);
+    }
+    
+    // Serialize the updated data back to the account
+    wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
+
+    msg!("Belief Updated!");
+
     Ok(())
 }
 
@@ -133,9 +257,9 @@ pub fn set_approval(
     
     // Verify signer is an authorized wallet and update the appropriate approval
     if signer.key == &wager.contract.wallet_a {
-        wager.wallet_a_decision = decision;
+        wager.decision_a = decision;
     } else if signer.key == &wager.contract.wallet_b {
-        wager.wallet_b_decision = decision;
+        wager.decision_b = decision;
     } else {
         return Err(ProgramError::InvalidArgument);
     }
@@ -145,15 +269,15 @@ pub fn set_approval(
 
     
     // Check if we need to execute payout logic
-    if wager.wallet_a_decision == ApprovalState::Landed && 
-       wager.wallet_b_decision == ApprovalState::Landed {
+    if wager.decision_a == ApprovalState::Landed && 
+       wager.decision_b == ApprovalState::Landed {
         // Execute payout logic
         msg!("Wager Landed!")
     }
 
     // Check if we need to execute payout logic
-    if wager.wallet_a_decision == ApprovalState::Missed && 
-       wager.wallet_b_decision == ApprovalState::Missed {
+    if wager.decision_a == ApprovalState::Missed && 
+       wager.decision_b == ApprovalState::Missed {
         // Execute payout logic
         msg!("Wager Missed!")
     }

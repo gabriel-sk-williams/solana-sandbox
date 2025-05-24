@@ -5,7 +5,13 @@ pub mod state;
 pub mod processor;
 
 use instruction::WagerInstruction;
-use processor::{get_wager, create_wager, set_approval};
+use processor::{
+    get_wager, 
+    create_wager, 
+    process_deposit,
+    update_belief,
+    set_approval,
+};
 
 use solana_program::{
     account_info::{AccountInfo},
@@ -34,12 +40,18 @@ pub fn process_instruction(
         WagerInstruction::CreateWager { contract } => {
             create_wager(program_id, accounts, contract)
         }
+        WagerInstruction::ProcessDeposit { amount } => {
+            process_deposit(program_id, accounts, amount)
+        }
+        WagerInstruction::UpdateBelief { belief } => {
+            update_belief(program_id, accounts, belief)
+        }
         WagerInstruction::SetApproval { decision } => {
             set_approval(program_id, accounts, decision)
         }
+        
     }
 }
-
 
 #[cfg(test)]
 mod test;

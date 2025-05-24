@@ -5,14 +5,16 @@ use crate::state::{VersusContract, ApprovalState};
 use borsh::{BorshDeserialize, BorshSerialize};
 
 use solana_program::{
-    msg,
     program_error::ProgramError,
+    msg,
 };
 
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub enum WagerInstruction {
     GetWager,
     CreateWager { contract: VersusContract },
+    ProcessDeposit { amount: u64 },
+    UpdateBelief { belief: u8 },
     SetApproval { decision: ApprovalState },
 }
 
@@ -37,6 +39,18 @@ impl WagerInstruction {
                 Ok(Self::CreateWager { contract: versus_contract })
             }
             2 => {
+                let amount = u64::try_from_slice(rest)
+                    .map_err(|_| ProgramError::InvalidInstructionData)?;
+                
+                Ok(Self::ProcessDeposit { amount })
+            }
+            3 => {
+                let belief = u8::try_from_slice(rest)
+                    .map_err(|_| ProgramError::InvalidInstructionData)?;
+                
+                Ok(Self::UpdateBelief { belief })
+            }
+            4 => {
                 let (&decision_byte, _) = rest
                     .split_first()
                     .ok_or(ProgramError::InvalidInstructionData)?;
