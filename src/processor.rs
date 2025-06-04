@@ -58,7 +58,7 @@ pub fn create_wager(
     let rent = Rent::get()?;
     let terms_allocation = 4 + contract.terms.len();
     let contract_allocation = terms_allocation + 32 + 32 + 8;
-    let wager_allocation = contract_allocation + 2 + 2 + 2;
+    let wager_allocation = contract_allocation + 2 + 2 + 2 + 2 + 1;
     let required_lamports = rent.minimum_balance(wager_allocation);
 
     // Derive PDA
@@ -100,12 +100,15 @@ pub fn create_wager(
 
     let wager = Wager {
         contract: contract,
-        decision_a: ApprovalState::Pending,
-        decision_b: ApprovalState::Pending,
-        belief_a: 255,
-        belief_b: 255,
         paid_a: false,
         paid_b: false,
+        belief_a: 255,
+        belief_b: 255,
+        locked_a: false,
+        locked_b: false,
+        decision_a: ApprovalState::Pending,
+        decision_b: ApprovalState::Pending,
+        payouts_rendered: false,
     };
 
     wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
@@ -229,6 +232,42 @@ pub fn update_belief(
     wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
 
     msg!("Belief Updated!");
+
+    Ok(())
+}
+
+pub fn lock_status(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+) -> ProgramResult {
+    let accounts_iter = &mut accounts.iter();
+    let wager_account = next_account_info(accounts_iter)?;
+    let signer = next_account_info(accounts_iter)?;
+
+    // Verify account ownership
+    if wager_account.owner != program_id {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // Verify signer
+    if !signer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    // Deserialize the account data
+    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
+
+    // Verify signer is an authorized wallet and update the appropriate approval
+    if signer.key == &wager.contract.wallet_a {
+        wager.locked_a = true;
+    } else if signer.key == &wager.contract.wallet_b {
+        wager.locked_b = true;
+    } else {
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    // Serialize the updated data back to the account
+    wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
 
     Ok(())
 }

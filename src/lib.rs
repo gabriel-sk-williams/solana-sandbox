@@ -10,6 +10,7 @@ use processor::{
     create_wager, 
     process_deposit,
     update_belief,
+    lock_status,
     set_approval,
 };
 
@@ -46,12 +47,11 @@ pub fn process_instruction(
         WagerInstruction::UpdateBelief { belief } => {
             update_belief(program_id, accounts, belief)
         }
+        WagerInstruction::LockStatus => {
+            lock_status(program_id, accounts)
+        }
         WagerInstruction::SetApproval { decision } => {
             set_approval(program_id, accounts, decision)
         }
-        
     }
 }
-
-#[cfg(test)]
-mod test;

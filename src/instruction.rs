@@ -15,6 +15,7 @@ pub enum WagerInstruction {
     CreateWager { contract: VersusContract },
     ProcessDeposit { amount: u64 },
     UpdateBelief { belief: u8 },
+    LockStatus,
     SetApproval { decision: ApprovalState },
 }
 
@@ -51,6 +52,9 @@ impl WagerInstruction {
                 Ok(Self::UpdateBelief { belief })
             }
             4 => {
+                Ok(Self::LockStatus)
+            }
+            5 => {
                 let (&decision_byte, _) = rest
                     .split_first()
                     .ok_or(ProgramError::InvalidInstructionData)?;

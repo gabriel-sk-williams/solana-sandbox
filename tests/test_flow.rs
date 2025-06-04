@@ -1,8 +1,8 @@
-#![cfg(test)]
-
 use borsh::to_vec;
-use crate::{process_instruction, WagerInstruction};
-use crate::state::{ApprovalState, VersusContract};
+
+use solana_god::{process_instruction};
+use solana_god::instruction::{WagerInstruction};
+use solana_god::state::{ApprovalState, VersusContract};
 
 use solana_program::{
     pubkey::Pubkey,
@@ -164,7 +164,32 @@ async fn test_versus_contract() {
     assert!(result.is_err());
 
     //
-    // STEP FOUR: Set approval status
+    // STEP FOUR: Lock status
+    //
+
+    // wallet_a
+    let update_data = WagerInstruction::LockStatus;
+    let encoded_data = to_vec(&update_data).unwrap();
+
+    let lock_instruction = Instruction::new_with_bytes(
+        program_id,
+        &encoded_data,
+        vec![
+            AccountMeta::new(wager_pda, false),
+            AccountMeta::new_readonly(wallet_a.pubkey(), true),
+        ],
+    );
+
+    // Create and send transaction
+    let mut lock_transaction = Transaction::new_with_payer(
+        &[lock_instruction],
+        Some(&payer.pubkey())
+    );
+    lock_transaction.sign(&[&payer, &wallet_a], recent_blockhash);
+    banks_client.process_transaction(lock_transaction).await.unwrap();
+
+    //
+    // STEP FIVE: Set approval status
     //
 
     // wallet_a
