@@ -1,4 +1,4 @@
-// instruciion.rs
+// instruction.rs
 
 use crate::state::{VersusContract, ApprovalState};
 
@@ -17,20 +17,21 @@ pub enum WagerInstruction {
     UpdateBelief { belief: u8 },
     LockStatus,
     SetApproval { decision: ApprovalState },
+    RenderPayouts,
 }
 
 impl WagerInstruction {
     pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
-        // Get the instruction variant from the first byte
+        // Get instruction variant from first byte
         let (&variant, rest) = input
             .split_first()
             .ok_or(ProgramError::InvalidInstructionData)?;
 
         msg!("input {:?}", input);
  
-        // Match instruction type and parse the remaining bytes based on the variant
+        // Match instruction type and parse remaining bytes based on variant
         match variant {
-            0 => { // No additional data needed
+            0 => {
                 Ok(Self::GetWager)
             }
             1 => {
@@ -68,6 +69,9 @@ impl WagerInstruction {
                 };
 
                 Ok(Self::SetApproval { decision })
+            }
+            6 => {
+                Ok(Self::RenderPayouts)
             }
             _ => {
                 Err(ProgramError::InvalidInstructionData)

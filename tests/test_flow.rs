@@ -23,6 +23,10 @@ use solana_sdk::{
 #[tokio::test]
 async fn test_versus_contract() {
 
+    //
+    // Create Program Test
+    //
+
     let program_id = Pubkey::new_unique();
     let (banks_client, payer, recent_blockhash) = 
         ProgramTest::new("solana_god", program_id, processor!(process_instruction))
@@ -48,7 +52,11 @@ async fn test_versus_contract() {
     banks_client.process_transaction(transaction).await.unwrap();
 
     //
-    // STEP ONE: Create test wager
+    // Create Vault Account
+    //
+
+    //
+    // STEP ONE: Create test wager and vault
     //
 
     let versus_contract = VersusContract {
@@ -58,7 +66,7 @@ async fn test_versus_contract() {
         stake: stake_amount,
     };
 
-    // Hash terms with both wallets
+    // Hash terms with both wallets to create Wager PDA
     let terms_hash = hash(versus_contract.terms.as_bytes()).to_bytes();
     let (wager_pda, _bump) = Pubkey::find_program_address(
         &[
@@ -67,6 +75,12 @@ async fn test_versus_contract() {
             versus_contract.wallet_b.as_ref(),
         ], 
         &program_id
+    );
+
+    // Create vault PDA
+    let (vault_pda, _vault_bump) = Pubkey::find_program_address(
+        &[b"vault", &wager_pda.to_bytes()],
+        &program_id,
     );
 
     // Build and encode wager
@@ -78,6 +92,7 @@ async fn test_versus_contract() {
         &encoded_data,
         vec![
             AccountMeta::new(wager_pda, false),
+            AccountMeta::new(vault_pda, false),
             AccountMeta::new(payer.pubkey(), true),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
@@ -95,6 +110,7 @@ async fn test_versus_contract() {
     // STEP TWO: Process Deposits
     //
 
+    // wallet_a
     let deposit_data = WagerInstruction::ProcessDeposit { amount: stake_amount };
     let encoded_data = to_vec(&deposit_data).unwrap();
 
@@ -103,6 +119,7 @@ async fn test_versus_contract() {
         &encoded_data,
         vec![
             AccountMeta::new(wager_pda, false),
+            AccountMeta::new(vault_pda, false),
             AccountMeta::new(wallet_a.pubkey(), true),
             AccountMeta::new_readonly(system_program::id(), false),
         ],
@@ -114,6 +131,29 @@ async fn test_versus_contract() {
         Some(&payer.pubkey())
     );
     deposit_transaction.sign(&[&payer, &wallet_a], recent_blockhash);
+    banks_client.process_transaction(deposit_transaction).await.unwrap();
+
+    // wallet_b
+    let deposit_data = WagerInstruction::ProcessDeposit { amount: stake_amount };
+    let encoded_data = to_vec(&deposit_data).unwrap();
+
+    let deposit_instruction = Instruction::new_with_bytes(
+        program_id,
+        &encoded_data,
+        vec![
+            AccountMeta::new(wager_pda, false),
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(wallet_b.pubkey(), true),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+    );
+
+    // Create and send transaction
+    let mut deposit_transaction = Transaction::new_with_payer(
+        &[deposit_instruction],
+        Some(&payer.pubkey())
+    );
+    deposit_transaction.sign(&[&payer, &wallet_b], recent_blockhash);
     banks_client.process_transaction(deposit_transaction).await.unwrap();
 
     //
@@ -160,16 +200,15 @@ async fn test_versus_contract() {
         Some(&payer.pubkey())
     );
     update_transaction.sign(&[&payer, &wallet_b], recent_blockhash);
-    let result = banks_client.process_transaction(update_transaction).await; // .unwrap();
-    assert!(result.is_err());
+    banks_client.process_transaction(update_transaction).await.unwrap();
 
     //
     // STEP FOUR: Lock status
     //
 
     // wallet_a
-    let update_data = WagerInstruction::LockStatus;
-    let encoded_data = to_vec(&update_data).unwrap();
+    let lock_data = WagerInstruction::LockStatus;
+    let encoded_data = to_vec(&lock_data).unwrap();
 
     let lock_instruction = Instruction::new_with_bytes(
         program_id,
@@ -236,9 +275,10 @@ async fn test_versus_contract() {
     banks_client.process_transaction(approval_transaction).await.unwrap();
 
     //
-    // STEP FIVE: Read the wager
+    // STEP SIX: Read wager
     //
 
+    
     let variant = WagerInstruction::GetWager;
     let encoded_data = to_vec(&variant).unwrap();
 
@@ -255,5 +295,34 @@ async fn test_versus_contract() {
     );
     read_transaction.sign(&[&payer], recent_blockhash);
     banks_client.process_transaction(read_transaction).await.unwrap();
+    
+
+    //
+    // STEP SEVEN: Render payouts
+    //
+
+    // wallet_a
+    let variant = WagerInstruction::RenderPayouts;
+    let encoded_data = to_vec(&variant).unwrap();
+
+    let payout_instruction = Instruction::new_with_bytes(
+        program_id,
+        &encoded_data,
+        vec![
+            AccountMeta::new(wager_pda, false),
+            AccountMeta::new(vault_pda, false),
+            AccountMeta::new(wallet_a.pubkey(), true),
+            AccountMeta::new_readonly(system_program::id(), false),
+        ],
+    );
+
+    // Create and send transaction
+    let mut payout_transaction = Transaction::new_with_payer(
+        &[payout_instruction],
+        Some(&payer.pubkey())
+    );
+    payout_transaction.sign(&[&payer, &wallet_a], recent_blockhash);
+    banks_client.process_transaction(payout_transaction).await.unwrap();
+    
 
 }

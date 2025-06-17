@@ -12,6 +12,7 @@ use processor::{
     update_belief,
     lock_status,
     set_approval,
+    render_payouts,
 };
 
 use solana_program::{
@@ -52,6 +53,9 @@ pub fn process_instruction(
         }
         WagerInstruction::SetApproval { decision } => {
             set_approval(program_id, accounts, decision)
+        }
+        WagerInstruction::RenderPayouts => {
+            render_payouts(program_id, accounts)
         }
     }
 }
