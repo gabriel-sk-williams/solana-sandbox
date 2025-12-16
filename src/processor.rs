@@ -4,7 +4,7 @@ use std::cmp;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::state::{PayoutStatus, ApprovalState, VersusContract, Wager};
+use crate::state::{VersusWager, Wager, Seat, Status, Judgment};
 
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
@@ -18,82 +18,43 @@ use solana_program::{
     system_program,
     system_instruction,
     msg,
+    clock::Clock,
+    // sysvar::Sysvar,
 };
-
-pub fn get_wager(
-    program_id: &Pubkey,
-    accounts: &[AccountInfo],
-) -> ProgramResult {
-    msg!("id {:?}", program_id);
-
-    let accounts_iter = &mut accounts.iter();
-    let wager_account = next_account_info(accounts_iter)?;
-
-    // Print SOL balance (in lamports)
-    msg!("wager_account lamports: {}", wager_account.lamports());
-
-    // Deserialize wager
-    let data = &wager_account.data.borrow_mut();
-    let wager_data = Wager::try_from_slice(&data);
-    msg!("result {:?}", wager_data);
-
-    Ok(())
-}
 
 pub fn create_wager(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    contract: VersusContract,
+    wager: Wager,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
+    let payer = next_account_info(accounts_iter)?;
     let wager_account = next_account_info(accounts_iter)?;
     let vault_account = next_account_info(accounts_iter)?;
-    let user_account = next_account_info(accounts_iter)?;
     let system_program = next_account_info(accounts_iter)?;
 
-
     // Verify account ownership and signing
-    if !user_account.is_signer {
+    if !payer.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
     // Create wager account
     let rent = Rent::get()?;
-    let terms_allocation = 4 + contract.terms.len();
-    let contract_allocation = terms_allocation + 32 + 32 + 8;
-    let wager_allocation = contract_allocation + 2 + 2 + 2;
-    let required_lamports = rent.minimum_balance(wager_allocation);
+    let space = VersusWager::SPACE;
+    let required_lamports = rent.minimum_balance(space);
 
-    // Derive PDA
-    let terms_hash = hash(contract.terms.as_bytes()).to_bytes();
-    let (wager_pda, wager_bump) = Pubkey::find_program_address(
-        &[
-            &terms_hash[..],
-            contract.wallet_a.as_ref(),
-            contract.wallet_b.as_ref(),
-        ], 
-        program_id
-    );
-
-    //msg!("wager: {:?} {:?}", wager_pda, wager_bump);
-
-    if wager_pda != *wager_account.key {
-        return Err(ProgramError::InvalidArgument);
-    }
-
+    // create vault PDA
     let (vault_pda, vault_bump) = Pubkey::find_program_address(
-        &[b"vault", wager_pda.as_ref()],
+        &[b"vault", wager_account.key.as_ref()],
         program_id
     );
-
-    //msg!("vault: {:?} {:?}", vault_pda, vault_bump);
 
     if vault_pda != *vault_account.key {
         return Err(ProgramError::InvalidArgument);
     }
 
     let vault_related_accounts = &[
-        user_account.clone(),
+        payer.clone(),
         vault_account.clone(),
         system_program.clone(),
     ];
@@ -101,43 +62,35 @@ pub fn create_wager(
     create_vault(
         program_id,
         vault_related_accounts,
-        &wager_pda,
+        &wager_account.key,
         vault_bump
     )?;
 
-    // Create wager account with PDA
-    invoke_signed(
+    invoke(
         &system_instruction::create_account(
-            user_account.key,
+            payer.key,
             wager_account.key,
             required_lamports,
-            wager_allocation as u64,
+            space as u64,
             program_id,
         ),
         &[
-            user_account.clone(), 
+            payer.clone(), 
             wager_account.clone(), 
             system_program.clone(),
         ],
-        &[&[
-            &terms_hash[..],
-            contract.wallet_a.as_ref(),
-            contract.wallet_b.as_ref(),
-            &[wager_bump]
-        ]],
     )?;
 
-    let wager = Wager {
-        contract: contract,
-        status_a: PayoutStatus::NotStaked,
-        status_b: PayoutStatus::NotStaked,
-        belief_a: 255,
-        belief_b: 255,
-        decision_a: ApprovalState::Pending,
-        decision_b: ApprovalState::Pending,
+    let clock = Clock::get()?;
+    let current_timestamp = clock.unix_timestamp;
+
+    let versus_wager = VersusWager {
+        wager: wager,
+        seat_a: Seat::open(current_timestamp),
+        seat_b: Seat::open(current_timestamp),
     };
 
-    wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
+    versus_wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
     
     msg!("Wager stored successfully!");
 
@@ -147,29 +100,28 @@ pub fn create_wager(
 pub fn create_vault(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    wager_pda: &Pubkey,
+    wager_key: &Pubkey,
     vault_bump: u8,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-
-    let user_account = next_account_info(accounts_iter)?;
+    let payer = next_account_info(accounts_iter)?;
     let vault_account = next_account_info(accounts_iter)?;
     let system_program = next_account_info(accounts_iter)?;
 
     let rent = Rent::get()?;
     let lamports = rent.minimum_balance(0); // No data, just enough for rent exemption
 
-    let vault_seeds = &[b"vault", wager_pda.as_ref(), &[vault_bump]];
+    let vault_seeds = &[b"vault", wager_key.as_ref(), &[vault_bump]];
 
     invoke_signed(
         &system_instruction::create_account(
-            user_account.key,
+            payer.key,
             vault_account.key,
             lamports,
             0, // vault holds no data
             program_id,
         ),
-        &[user_account.clone(), vault_account.clone(), system_program.clone()],
+        &[payer.clone(), vault_account.clone(), system_program.clone()],
         &[vault_seeds],
     )?;
 
@@ -187,13 +139,13 @@ pub fn process_deposit(
     msg!("Processing Deposit...");
     
     // Get accounts
-    let wager_account = next_account_info(accounts_iter)?;
+    let payer = next_account_info(accounts_iter)?;
+    let versus_account = next_account_info(accounts_iter)?;
     let vault_account = next_account_info(accounts_iter)?;
-    let user_account = next_account_info(accounts_iter)?;
     let system_program = next_account_info(accounts_iter)?;
     
     // Verify accounts
-    if !user_account.is_signer {
+    if !payer.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
     
@@ -202,50 +154,45 @@ pub fn process_deposit(
     }
     
     // Get wager data
-    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
+    let mut versus = VersusWager::try_from_slice(&versus_account.data.borrow())?;
     
     // Verify stake amount
-    if amount < wager.contract.stake {
+    if amount < versus.wager.stake {
         return Err(ProgramError::InsufficientFunds);
+    }
+
+    // Find matching seat
+    let seat = if payer.key == &versus.seat_a.wallet {
+        &mut versus.seat_a
+    } else if payer.key == &versus.seat_b.wallet {
+        &mut versus.seat_b
+    } else {
+        return Err(ProgramError::InvalidArgument);
+    };
+
+    // Verify wallet has not yet paid stake
+    if seat.status != Status::Open {
+        return Err(ProgramError::Immutable);
     }
     
     // Transfer funds from user to program account
     invoke(
         &system_instruction::transfer(
-            user_account.key,
+            payer.key,
             vault_account.key,
             amount,
         ),
         &[
-            user_account.clone(),
+            payer.clone(),
             vault_account.clone(),
             system_program.clone(),
         ],
     )?;
-    
-    // Update payment status
-    if user_account.key == &wager.contract.wallet_a {
 
-        // Verify wallet has not yet paid stake
-        if wager.status_a != PayoutStatus::NotStaked {
-            return Err(ProgramError::Immutable);
-        }
-        wager.status_a = PayoutStatus::Staked;
-
-    } else if user_account.key == &wager.contract.wallet_b {
-
-        // Verify wallet has not yet paid stake
-        if wager.status_b != PayoutStatus::NotStaked {
-            return Err(ProgramError::Immutable);
-        }
-        wager.status_b = PayoutStatus::Staked;
-
-    } else {
-        return Err(ProgramError::InvalidArgument);
-    }
+    seat.status = Status::Staked;
     
     // Serialize and save updated state
-    wager.serialize(&mut *wager_account.data.borrow_mut())?;
+    versus.serialize(&mut *versus_account.data.borrow_mut())?;
     
     Ok(())
 }
@@ -256,11 +203,11 @@ pub fn update_belief(
     belief: u8,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-    let wager_account = next_account_info(accounts_iter)?;
     let signer = next_account_info(accounts_iter)?;
-
+    let versus_account = next_account_info(accounts_iter)?;
+    
     // Verify account ownership
-    if wager_account.owner != program_id {
+    if versus_account.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
     
@@ -270,33 +217,26 @@ pub fn update_belief(
     }
     
     // Deserialize account data
-    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
-    
-    // Verify signer is an authorized wallet
-    if signer.key == &wager.contract.wallet_a {
+    let mut versus = VersusWager::try_from_slice(&versus_account.data.borrow())?;
 
-        // Verify wallet has paid stake
-        if wager.status_a != PayoutStatus::Staked {
-            return Err(ProgramError::Immutable);
-        } else {
-            wager.belief_a = belief;
-        }
-
-    } else if signer.key == &wager.contract.wallet_b {
-
-        // Verify wallet has paid stake
-        if wager.status_b != PayoutStatus::Staked {
-            return Err(ProgramError::Immutable);
-        } else {
-            wager.belief_b = belief;
-        }
-
+    // Find matching seat
+    let seat = if signer.key == &versus.seat_a.wallet {
+        &mut versus.seat_a
+    } else if signer.key == &versus.seat_b.wallet {
+        &mut versus.seat_b
     } else {
         return Err(ProgramError::InvalidArgument);
+    };
+
+    // Verify wallet has paid stake before setting belief
+    if seat.status != Status::Staked {
+        return Err(ProgramError::Immutable);
+    } else {
+        seat.belief = belief;
     }
-    
+
     // Serialize updated data back to account
-    wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
+    versus.serialize(&mut &mut versus_account.data.borrow_mut()[..])?;
 
     msg!("Belief Updated!");
 
@@ -308,11 +248,11 @@ pub fn lock_status(
     accounts: &[AccountInfo],
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-    let wager_account = next_account_info(accounts_iter)?;
     let signer = next_account_info(accounts_iter)?;
+    let versus_account = next_account_info(accounts_iter)?;
 
     // Verify account ownership
-    if wager_account.owner != program_id {
+    if versus_account.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
@@ -322,34 +262,36 @@ pub fn lock_status(
     }
 
     // Deserialize account data
-    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
+    let mut versus = VersusWager::try_from_slice(&versus_account.data.borrow())?;
 
-    // Verify signer is an authorized wallet and update appropriate approval
-    if signer.key == &wager.contract.wallet_a {
-        wager.status_a = PayoutStatus::Locked;
-    } else if signer.key == &wager.contract.wallet_b {
-        wager.status_b = PayoutStatus::Locked;
+    // Find matching seat
+    let seat = if signer.key == &versus.seat_a.wallet {
+        &mut versus.seat_a
+    } else if signer.key == &versus.seat_b.wallet {
+        &mut versus.seat_b
     } else {
         return Err(ProgramError::InvalidArgument);
-    }
+    };
+
+    seat.status = Status::Locked;
 
     // Serialize updated data back to account
-    wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
+    versus.serialize(&mut &mut versus_account.data.borrow_mut()[..])?;
 
     Ok(())
 }
 
-pub fn set_approval(
+pub fn set_judgment(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
-    decision: ApprovalState,
+    judgment: Judgment,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-    let wager_account = next_account_info(accounts_iter)?;
     let signer = next_account_info(accounts_iter)?;
+    let versus_account = next_account_info(accounts_iter)?;
 
     // Verify account ownership
-    if wager_account.owner != program_id {
+    if versus_account.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
     
@@ -359,103 +301,95 @@ pub fn set_approval(
     }
     
     // Deserialize account data
-    let mut wager = Wager::try_from_slice(&wager_account.data.borrow())?;
-    
-    // Verify signer is an authorized wallet and update appropriate approval
-    if signer.key == &wager.contract.wallet_a {
-        wager.decision_a = decision;
-    } else if signer.key == &wager.contract.wallet_b {
-        wager.decision_b = decision;
+    let mut versus = VersusWager::try_from_slice(&versus_account.data.borrow())?;
+
+    // Find matching seat
+    let seat = if signer.key == &versus.seat_a.wallet {
+        &mut versus.seat_a
+    } else if signer.key == &versus.seat_b.wallet {
+        &mut versus.seat_b
     } else {
         return Err(ProgramError::InvalidArgument);
-    }
+    };
+
+    seat.judgment = judgment;
     
     // Serialize updated data back to account
-    wager.serialize(&mut &mut wager_account.data.borrow_mut()[..])?;
+    versus.serialize(&mut &mut versus_account.data.borrow_mut()[..])?;
 
     Ok(())
 }
 
-pub fn render_payouts(
+pub fn render_payout(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
 ) -> ProgramResult {
-
-    msg!("Rendering Payouts!");
-
     let accounts_iter = &mut accounts.iter();
-    let wager_account = next_account_info(accounts_iter)?;
+    let signer = next_account_info(accounts_iter)?;
+    let versus_account = next_account_info(accounts_iter)?;
     let vault_account = next_account_info(accounts_iter)?;
-    let user_account = next_account_info(accounts_iter)?;
     let system_program = next_account_info(accounts_iter)?;
 
     // Verify account ownership
-    if wager_account.owner != program_id {
+    if versus_account.owner != program_id {
         return Err(ProgramError::IncorrectProgramId);
     }
 
     // Verify signer
-    if !user_account.is_signer {
+    if !signer.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
     // Deserialize account data
-    let wager = Wager::try_from_slice(&wager_account.data.borrow())?;
+    let versus = VersusWager::try_from_slice(&versus_account.data.borrow())?;
 
-    let is_player_a = user_account.key == &wager.contract.wallet_a;
-    let _is_player_b = user_account.key == &wager.contract.wallet_b;
+    let payouts = calc_risk(versus.wager.stake, versus.seat_a.belief as u64, versus.seat_b.belief as u64);
+    let (risk_a, risk_b) = payouts;
 
-    // Check if we need to execute payout logic
-    if wager.decision_a == ApprovalState::Landed && 
-       wager.decision_b == ApprovalState::Landed {
-        
-        // Execute payout logic
-        let payouts = calc_risk(wager.contract.stake, wager.belief_a as u64, wager.belief_b as u64);
-        let (payout_a, _payout_b) = payouts;
+    // Find matching wallet
+    let player_wallet = if signer.key == &versus.seat_a.wallet {
+        &versus.seat_a.wallet
+    } else if signer.key == &versus.seat_b.wallet {
+        &versus.seat_a.wallet
+    } else {
+        return Err(ProgramError::InvalidArgument);
+    };
+    
+    // Determine if players agree on wager outcome
+    let judgment = if 
+        versus.seat_a.judgment == Judgment::Landed &&  
+        versus.seat_b.judgment == Judgment::Landed {
+        msg!("Wager Landed!");
+        Judgment::Landed
+    } else if
+        versus.seat_a.judgment == Judgment::Missed && 
+        versus.seat_b.judgment == Judgment::Missed {
+        msg!("Wager Missed!");
+        Judgment::Missed
+    } else if 
+        versus.seat_a.judgment == Judgment::Push && 
+        versus.seat_b.judgment == Judgment::Push {
+        msg!("Push!");
+        Judgment::Push
+    } else {
+        return Err(ProgramError::InvalidAccountData)
+    };
 
-        msg!("rendering {:?}", payout_a);
-        
-        // Transfer payouts
-        if is_player_a && payout_a > 0 {
-            invoke(
-                &system_instruction::transfer(
-                    user_account.key,
-                    vault_account.key,
-                    payout_a,
-                ),
-                &[
-                    user_account.clone(),
-                    vault_account.clone(),
-                    system_program.clone(),
-                ],
-            )?;
-            
-        }
+    msg!("{:?} {} {} {}", judgment, player_wallet, risk_a, risk_b);
 
-        msg!("Wager Landed!")
-    }
-
-    /*
-    // Check if we need to execute payout logic
-    if wager.decision_a == ApprovalState::Missed && 
-       wager.decision_b == ApprovalState::Missed {
-
-        // Execute payout logic
-        //let payouts = calc_risk(wager.contract.stake, wager.belief_a as u64, wager.belief_b as u64);
-        //let (payout_a, payout_b) = payouts;
-
-        msg!("Wager Missed!")
-    }
-
-    // Check if we need to execute payout logic
-    if wager.decision_a == ApprovalState::Push && 
-       wager.decision_b == ApprovalState::Push {
-
-        // Return original stakes to both players
-
-        msg!("Wager Pushed!")
-    }
-    */
+    invoke_signed(
+        &system_instruction::transfer(
+            vault_account.key,
+            signer.key,
+            versus.wager.stake,
+        ),
+        &[
+            vault_account.clone(),
+            signer.clone(),
+            system_program.clone(),
+        ],
+        &[&[b"vault", versus_account.key.as_ref(), &[versus.wager.vault_bump]]]
+    )?;
 
     Ok(())
 }
@@ -488,3 +422,47 @@ fn calc_risk(stake: u64, belief_a: u64, belief_b: u64) -> (u64, u64) {
 
     return (risk_a, risk_b);
 }
+
+/*
+// Check if we need to execute payout logic
+if wager.decision_a == ApprovalState::Missed && 
+    wager.decision_b == ApprovalState::Missed {
+
+    // Execute payout logic
+    //let payouts = calc_risk(wager.contract.stake, wager.belief_a as u64, wager.belief_b as u64);
+    //let (payout_a, payout_b) = payouts;
+
+    msg!("Wager Missed!")
+}
+
+// Check if we need to execute payout logic
+if wager.decision_a == ApprovalState::Push && 
+    wager.decision_b == ApprovalState::Push {
+
+    // Return original stakes to both players
+
+    msg!("Wager Pushed!")
+}
+*/
+
+/*
+pub fn get_wager(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+) -> ProgramResult {
+    msg!("id {:?}", program_id);
+
+    let accounts_iter = &mut accounts.iter();
+    let wager_account = next_account_info(accounts_iter)?;
+
+    // Print SOL balance (in lamports)
+    msg!("wager_account lamports: {}", wager_account.lamports());
+
+    // Deserialize wager
+    let data = &wager_account.data.borrow_mut();
+    let wager_data = Wager::try_from_slice(&data);
+    msg!("result {:?}", wager_data);
+
+    Ok(())
+}
+*/

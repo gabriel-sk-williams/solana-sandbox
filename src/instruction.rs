@@ -1,6 +1,6 @@
 // instruction.rs
 
-use crate::state::{VersusContract, ApprovalState};
+use crate::state::{Wager, Judgment};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
@@ -11,12 +11,11 @@ use solana_program::{
 
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub enum WagerInstruction {
-    GetWager,
-    CreateWager { contract: VersusContract },
+    CreateWager { wager: Wager },
     ProcessDeposit { amount: u64 },
     UpdateBelief { belief: u8 },
     LockStatus,
-    SetApproval { decision: ApprovalState },
+    SetJudgment { judgment: Judgment },
     RenderPayouts,
 }
 
@@ -32,45 +31,42 @@ impl WagerInstruction {
         // Match instruction type and parse remaining bytes based on variant
         match variant {
             0 => {
-                Ok(Self::GetWager)
-            }
-            1 => {
-                let versus_contract = VersusContract::try_from_slice(
+                let wager = Wager::try_from_slice(
                     &rest).map_err(|_| ProgramError::InvalidInstructionData)?;
 
-                Ok(Self::CreateWager { contract: versus_contract })
+                Ok(Self::CreateWager { wager: wager })
             }
-            2 => {
+            1 => {
                 let amount = u64::try_from_slice(rest)
                     .map_err(|_| ProgramError::InvalidInstructionData)?;
                 
                 Ok(Self::ProcessDeposit { amount })
             }
-            3 => {
+            2 => {
                 let belief = u8::try_from_slice(rest)
                     .map_err(|_| ProgramError::InvalidInstructionData)?;
                 
                 Ok(Self::UpdateBelief { belief })
             }
-            4 => {
+            3 => {
                 Ok(Self::LockStatus)
             }
-            5 => {
+            4 => {
                 let (&decision_byte, _) = rest
                     .split_first()
                     .ok_or(ProgramError::InvalidInstructionData)?;
 
-                let decision = match decision_byte {
-                    0 => ApprovalState::Pending,
-                    1 => ApprovalState::Landed,
-                    2 => ApprovalState::Missed,
-                    3 => ApprovalState::Push,
+                let judgment = match decision_byte {
+                    0 => Judgment::Pending,
+                    1 => Judgment::Landed,
+                    2 => Judgment::Missed,
+                    3 => Judgment::Push,
                     _ => return Err(ProgramError::InvalidInstructionData),
                 };
 
-                Ok(Self::SetApproval { decision })
+                Ok(Self::SetJudgment { judgment })
             }
-            6 => {
+            5 => {
                 Ok(Self::RenderPayouts)
             }
             _ => {

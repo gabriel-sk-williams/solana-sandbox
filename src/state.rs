@@ -4,47 +4,75 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use solana_program::{
     pubkey::Pubkey,
+    system_program::ID,
 };
 
-// Contract for two competing predictions
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
-pub struct VersusContract {
-    pub terms: String,      // 4 + length
-    pub wallet_a: Pubkey,   // 32 bytes
-    pub wallet_b: Pubkey,   // 32 bytes
-    pub stake: u64,         // 8 bytes
+pub struct VersusWager {
+    pub wager: Wager,               // 73 bytes
+    pub seat_a: Seat,               // 43 bytes
+    pub seat_b: Seat,               // 43 bytes
+}
+
+impl VersusWager {
+    pub const SPACE: usize = 8 + 32 + 32 + 1 + 43 + 43;
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub struct Wager {
-    pub contract: VersusContract,
-    pub status_a: PayoutStatus,      // 1 byte
-    pub status_b: PayoutStatus,      // 1 byte
-    pub belief_a: u8,                // 1 byte
-    pub belief_b: u8,                // 1 byte
-    pub decision_a: ApprovalState,   // 1 byte
-    pub decision_b: ApprovalState,   // 1 byte
+    pub stake: u64,                 // 8 bytes
+    pub contract: Pubkey,           // 32 bytes
+    pub vault: Pubkey,              // 32 bytes
+    pub vault_bump: u8,             // 1 byte
 }
 
-// Payout states for a participant
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
+pub struct Seat {
+    pub wallet: Pubkey,             // 32 bytes
+    pub belief: u8,                 // 1 byte
+    pub status: Status,             // 1 byte
+    pub judgment: Judgment,         // 1 byte
+    pub last_change_at: i64,        // 8 bytes
+}
+
+impl Seat {
+    pub fn open(timestamp: i64) -> Self {
+        Seat {
+            wallet: ID,
+            belief: 255,
+            status: Status::Open,
+            judgment: Judgment::Pending,
+            last_change_at: timestamp
+        }
+    }
+
+    pub fn reserved(wallet: Pubkey, timestamp: i64) -> Self {
+        Seat {
+            wallet: wallet,
+            belief: 255,
+            status: Status::Open,
+            judgment: Judgment::Pending,
+            last_change_at: timestamp
+        }
+    }
+}
+
+// Game states for a given seat or participant
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
-pub enum PayoutStatus {
-    NotStaked,
+pub enum Status {
+    Open,
     Staked,
     Locked,
-    ClaimedPartial,
-    Settled
 }
 
-// Wager states, decided by participants
+// Ouctome, decided by participants
 #[derive(BorshSerialize, BorshDeserialize, PartialEq, Debug)]
-pub enum ApprovalState {
+pub enum Judgment {
     Pending,
     Landed,
     Missed,
-    Push
+    Push,
 }
-
 
 
 
