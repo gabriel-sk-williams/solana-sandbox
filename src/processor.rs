@@ -14,12 +14,11 @@ use solana_program::{
     program::invoke,
     program::invoke_signed,
     sysvar::{rent::Rent, Sysvar},
-    hash::hash,
+    // hash::hash,
     system_program,
     system_instruction,
     msg,
     clock::Clock,
-    // sysvar::Sysvar,
 };
 
 pub fn create_wager(
@@ -35,6 +34,10 @@ pub fn create_wager(
 
     // Verify account ownership and signing
     if !payer.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    if !wager_account.is_signer {
         return Err(ProgramError::MissingRequiredSignature);
     }
 
@@ -119,7 +122,7 @@ pub fn create_vault(
             vault_account.key,
             lamports,
             0, // vault holds no data
-            program_id,
+            &system_program::ID, // formerly program_id ???
         ),
         &[payer.clone(), vault_account.clone(), system_program.clone()],
         &[vault_seeds],
@@ -135,10 +138,6 @@ pub fn process_deposit(
     amount: u64,
 ) -> ProgramResult {
     let accounts_iter = &mut accounts.iter();
-
-    msg!("Processing Deposit...");
-    
-    // Get accounts
     let payer = next_account_info(accounts_iter)?;
     let versus_account = next_account_info(accounts_iter)?;
     let vault_account = next_account_info(accounts_iter)?;
@@ -161,12 +160,25 @@ pub fn process_deposit(
         return Err(ProgramError::InsufficientFunds);
     }
 
+    // TODO: rework seat logic
+    if versus.seat_a.wallet == system_program::ID {
+        versus.seat_a.wallet = *payer.key;
+        msg!("Seat A claimed by: {}", payer.key);
+    } else if versus.seat_b.wallet == system_program::ID {
+        versus.seat_b.wallet = *payer.key;
+        msg!("Seat B claimed by: {}", payer.key);
+    } else {
+        msg!("Both seats already taken!");
+        return Err(ProgramError::InvalidAccountData);
+    }
+
     // Find matching seat
     let seat = if payer.key == &versus.seat_a.wallet {
         &mut versus.seat_a
     } else if payer.key == &versus.seat_b.wallet {
         &mut versus.seat_b
     } else {
+        msg!("no matching seat");
         return Err(ProgramError::InvalidArgument);
     };
 
@@ -340,6 +352,11 @@ pub fn render_payout(
         return Err(ProgramError::MissingRequiredSignature);
     }
 
+    if vault_account.owner != &system_program::ID {
+        msg!("Vault owner is wrong!");
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
     // Deserialize account data
     let versus = VersusWager::try_from_slice(&versus_account.data.borrow())?;
 
@@ -350,32 +367,32 @@ pub fn render_payout(
     let player_wallet = if signer.key == &versus.seat_a.wallet {
         &versus.seat_a.wallet
     } else if signer.key == &versus.seat_b.wallet {
-        &versus.seat_a.wallet
+        &versus.seat_b.wallet
     } else {
         return Err(ProgramError::InvalidArgument);
     };
     
     // Determine if players agree on wager outcome
-    let judgment = if 
+    let _judgment = if 
         versus.seat_a.judgment == Judgment::Landed &&  
         versus.seat_b.judgment == Judgment::Landed {
-        msg!("Wager Landed!");
+        msg!("Players agree: Wager Landed!");
         Judgment::Landed
     } else if
         versus.seat_a.judgment == Judgment::Missed && 
         versus.seat_b.judgment == Judgment::Missed {
-        msg!("Wager Missed!");
+        msg!("Players agree: Wager Missed!");
         Judgment::Missed
     } else if 
         versus.seat_a.judgment == Judgment::Push && 
         versus.seat_b.judgment == Judgment::Push {
-        msg!("Push!");
+        msg!("Players agree to push");
         Judgment::Push
     } else {
         return Err(ProgramError::InvalidAccountData)
     };
 
-    msg!("{:?} {} {} {}", judgment, player_wallet, risk_a, risk_b);
+    msg!("Player {} {} {}", player_wallet, risk_a, risk_b);
 
     invoke_signed(
         &system_instruction::transfer(

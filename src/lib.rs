@@ -32,7 +32,7 @@ pub fn process_instruction(
 
     // Unpack instruction data
     let instruction = WagerInstruction::unpack(instruction_data)?;
-    msg!("instruct {:?}", instruction);
+    msg!("unpacked instruction {:?}", instruction);
 
     match instruction {
         WagerInstruction::CreateWager { wager } => {
