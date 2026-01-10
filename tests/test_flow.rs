@@ -2,14 +2,18 @@ use borsh::{BorshDeserialize, to_vec}; // BorshSerialize
 
 use solana_god::{process_instruction};
 use solana_god::instruction::{WagerInstruction};
-use solana_god::state::{VersusWager, Wager, Judgment};
+use solana_god::state::{Wager, Seat, Judgment};
 
 use solana_program::{
     pubkey::Pubkey,
-    // hash::hash,
     system_instruction,
     system_program,
+    // hash::hash,
+    // solana_system_interface,
 };
+
+// use solana_system_interface::instruction;
+// use solana_sdk_ids::system_program;
 
 use solana_program_test::*;
 
@@ -17,11 +21,11 @@ use solana_sdk::{
     instruction::{AccountMeta, Instruction},
     signature::Signer,
     transaction::Transaction,
-    signer::keypair::Keypair,
+    signer::keypair::Keypair
 };
 
 #[tokio::test]
-async fn test_versus_contract() {
+async fn wager_flow() {
 
     //
     // Create Program Test
@@ -37,6 +41,7 @@ async fn test_versus_contract() {
 
     let wallet_a = Keypair::new();
     let wallet_b = Keypair::new();
+    let seed_amount: u64 = 1_000_000_000; // 1.0 SOL
     let stake_amount: u64 = 100_000_000; // 0.1 SOL
     let belief_a: u8 = 65;
     let belief_b: u8 = 15;
@@ -44,8 +49,8 @@ async fn test_versus_contract() {
 
     let mut transaction = Transaction::new_with_payer(
         &[
-            system_instruction::transfer(&payer.pubkey(), &wallet_a.pubkey(), 1_000_000_000),
-            system_instruction::transfer(&payer.pubkey(), &wallet_b.pubkey(), 1_000_000_000),
+            system_instruction::transfer(&payer.pubkey(), &wallet_a.pubkey(), seed_amount),
+            system_instruction::transfer(&payer.pubkey(), &wallet_b.pubkey(), seed_amount),
         ],
         Some(&payer.pubkey()),
     );
@@ -58,32 +63,56 @@ async fn test_versus_contract() {
     // STEP ONE: Create test wager and vault
     //
 
-    // Create vault PDA
+    // Derive vault PDA
     let (vault_pda, vault_bump) = Pubkey::find_program_address(
         &[b"vault", &wager_account.pubkey().to_bytes()],
         &program_id,
     );
 
     let wager = Wager {
-        stake: stake_amount,
         contract: contract_pubkey,
         vault: vault_pda,
         vault_bump: vault_bump,
+        seat_count: 0,
+        capacity: 2,
+        stake: stake_amount,
     };
 
+    let reserved_seats = vec!(wallet_a.pubkey(), wallet_b.pubkey());
+
+    // Derive seat PDAs
+    let mut seat_pdas = Vec::new();
+    for i in 0..reserved_seats.len() {
+        let (seat_pda, _seat_bump) = Pubkey::find_program_address(
+            &[
+                b"seat",
+                &wager_account.pubkey().to_bytes(),
+                &(i as u8).to_le_bytes(),
+            ],
+            &program_id,
+        );
+        seat_pdas.push(seat_pda);
+    }
+
     // Build and encode wager
-    let contract_data = WagerInstruction::CreateWager { wager: wager };
+    let contract_data = WagerInstruction::CreateWager { wager, reserved_seats };
     let encoded_data = to_vec(&contract_data).unwrap();
+
+    let mut accounts = vec![
+        AccountMeta::new(payer.pubkey(), true),
+        AccountMeta::new(wager_account.pubkey(), true),
+        AccountMeta::new(vault_pda, false),
+        AccountMeta::new_readonly(system_program::id(), false),
+    ];
+
+    for seat_pda in &seat_pdas {
+        accounts.push(AccountMeta::new(*seat_pda, false));
+    }
 
     let write_instruction = Instruction::new_with_bytes(
         program_id,
         &encoded_data,
-        vec![
-            AccountMeta::new(payer.pubkey(), true),
-            AccountMeta::new(wager_account.pubkey(), true),
-            AccountMeta::new(vault_pda, false),
-            AccountMeta::new_readonly(system_program::id(), false),
-        ],
+        accounts,
     );
 
     // Create and send transaction
@@ -95,6 +124,7 @@ async fn test_versus_contract() {
     write_transaction.sign(&[&payer, &wager_account], recent_blockhash);
     banks_client.process_transaction(write_transaction).await.unwrap();
 
+    /*
     //
     // STEP TWO: Process Deposits
     //
@@ -270,28 +300,6 @@ async fn test_versus_contract() {
     banks_client.process_transaction(approval_transaction).await.unwrap();
 
     //
-    // FINAL STEP: Get account and print!
-    //
-    let account = banks_client
-        .get_account(wager_account.pubkey())
-        .await
-        .unwrap()
-        .expect("account should exist");
-
-    let account_data = VersusWager::try_from_slice(&account.data)
-        .expect("Failed to deserialize account data");
-
-    print_versus_wager(&account_data);
-
-    let vault = banks_client
-        .get_account(vault_pda)
-        .await
-        .unwrap()
-        .expect("vault should exist");
-
-    println!("Vault: {:?}", &vault);
-
-    //
     // STEP SIX: Render payouts
     //
 
@@ -325,28 +333,62 @@ async fn test_versus_contract() {
         .expect("vault should exist");
 
     println!("Vault: {:?}", &vault);
+    */
+
+    //
+    // FINAL STEP: Get accounts and print!
+    //
+
+    let account = banks_client
+        .get_account(wager_account.pubkey())
+        .await
+        .unwrap()
+        .expect("account should exist");
+
+    let account_data = Wager::try_from_slice(&account.data)
+        .expect("Failed to deserialize account data");
+
+    print_wager(&account_data);
+
+    let vault = banks_client
+        .get_account(vault_pda)
+        .await
+        .unwrap()
+        .expect("vault should exist");
+
+    println!("Vault: {:?}", &vault);
+
+    let seat = banks_client
+        .get_account(seat_pdas[0])
+        .await
+        .unwrap()
+        .expect("account should exist");
+
+    let seat_data = Seat::try_from_slice(&seat.data)
+        .expect("Failed to deserialize account data");
+
+    print_seat(&seat_data);
 }
 
-pub fn print_versus_wager(wager: &VersusWager) {
-    println!("\n📋 WAGER INFO:");
-    println!("  Stake:       {} lamports", wager.wager.stake);
-    println!("  Contract:    {}", wager.wager.contract);
-    println!("  Vault:       {}", wager.wager.vault);
-    println!("  Vault Bump:  {}", wager.wager.vault_bump);
-    
-    println!("\n👤 SEAT A:");
-    println!("  Wallet:      {}", wager.seat_a.wallet);
-    println!("  Belief:      {}", wager.seat_a.belief);
-    println!("  Status:      {:?}", wager.seat_a.status);
-    println!("  Judgment:    {:?}", wager.seat_a.judgment);
-    println!("  Last Change: {} (unix timestamp)", wager.seat_a.last_change_at);
-    
-    println!("\n👤 SEAT B:");
-    println!("  Wallet:      {}", wager.seat_b.wallet);
-    println!("  Belief:      {}", wager.seat_b.belief);
-    println!("  Status:      {:?}", wager.seat_b.status);
-    println!("  Judgment:    {:?}", wager.seat_b.judgment);
-    println!("  Last Change: {} (unix timestamp)", wager.seat_b.last_change_at);
-    
-    println!("\n═══════════════════════════════════════\n");
+
+pub fn print_wager(wager: &Wager) {
+    println!("📋 WAGER INFO:");
+    println!("  Contract:    {}", wager.contract);
+    println!("  Vault:       {}", wager.vault);
+    println!("  Vault Bump:  {}", wager.vault_bump);
+    println!("  Seat Count:  {}", wager.seat_count);
+    println!("  Capacity:    {}", wager.capacity);
+    println!("  Stake:       {} lamports", wager.stake);
+    println!("\n");
+}
+
+pub fn print_seat(seat: &Seat) {
+    println!("👤 SEAT INFO:");
+    println!("  Wager:       {}", seat.wager);
+    println!("  Authority:   {}", seat.authority);
+    println!("  Belief:      {}", seat.belief);
+    println!("  Status:      {:?}", seat.status);
+    println!("  Judgment:    {:?}", seat.judgment);
+    println!("  Last Change: {}", seat.last_change_at);
+    println!("\n");
 }

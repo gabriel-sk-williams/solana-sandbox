@@ -6,21 +6,23 @@ use borsh::{BorshDeserialize, BorshSerialize};
 
 use solana_program::{
     program_error::ProgramError,
+    pubkey::Pubkey,
     msg,
 };
 
 #[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub enum WagerInstruction {
-    CreateWager { wager: Wager },
-    ProcessDeposit { amount: u64 },
-    UpdateBelief { belief: u8 },
-    LockStatus,
-    SetJudgment { judgment: Judgment },
-    RenderPayouts,
+    CreateWager { wager: Wager, reserved_seats: Vec<Pubkey> },
+    //ProcessDeposit { amount: u64 },
+    //UpdateBelief { belief: u8 },
+    //LockStatus,
+    //SetJudgment { judgment: Judgment },
+    //RenderPayouts,
 }
 
 impl WagerInstruction {
     pub fn unpack(input: &[u8]) -> Result<Self, ProgramError> {
+        
         // Get instruction variant from first byte
         let (&variant, rest) = input
             .split_first()
@@ -31,11 +33,17 @@ impl WagerInstruction {
         // Match instruction type and parse remaining bytes based on variant
         match variant {
             0 => {
-                let wager = Wager::try_from_slice(
-                    &rest).map_err(|_| ProgramError::InvalidInstructionData)?;
+                const WAGER_SIZE: usize = Wager::SPACE;
 
-                Ok(Self::CreateWager { wager: wager })
+                let wager = Wager::try_from_slice(&rest[..WAGER_SIZE])
+                    .map_err(|_| ProgramError::InvalidInstructionData)?;
+        
+                let reserved_seats = Vec::<Pubkey>::try_from_slice(&rest[WAGER_SIZE..])
+                    .map_err(|_| ProgramError::InvalidInstructionData)?;
+
+                Ok(Self::CreateWager { wager, reserved_seats, })
             }
+            /* 
             1 => {
                 let amount = u64::try_from_slice(rest)
                     .map_err(|_| ProgramError::InvalidInstructionData)?;
@@ -69,9 +77,11 @@ impl WagerInstruction {
             5 => {
                 Ok(Self::RenderPayouts)
             }
+            */
             _ => {
                 Err(ProgramError::InvalidInstructionData)
             }
+            
         }
     }
 }

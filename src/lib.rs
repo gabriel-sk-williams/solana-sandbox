@@ -7,11 +7,11 @@ pub mod processor;
 use instruction::WagerInstruction;
 use processor::{
     create_wager, 
-    process_deposit,
-    update_belief,
-    lock_status,
-    set_judgment,
-    render_payout,
+    //process_deposit,
+    //update_belief,
+    //lock_status,
+    //set_judgment,
+    //render_payout,
 };
 
 use solana_program::{
@@ -35,9 +35,10 @@ pub fn process_instruction(
     msg!("unpacked instruction {:?}", instruction);
 
     match instruction {
-        WagerInstruction::CreateWager { wager } => {
-            create_wager(program_id, accounts, wager)
+        WagerInstruction::CreateWager { wager, reserved_seats } => {
+            create_wager(program_id, accounts, wager, reserved_seats)
         }
+        /*
         WagerInstruction::ProcessDeposit { amount } => {
             process_deposit(program_id, accounts, amount)
         }
@@ -53,5 +54,6 @@ pub fn process_instruction(
         WagerInstruction::RenderPayouts => {
             render_payout(program_id, accounts)
         }
+         */
     }
 }
